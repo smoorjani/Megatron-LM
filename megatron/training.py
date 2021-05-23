@@ -48,7 +48,7 @@ from megatron.model.realm_model import ICTBertModel
 from megatron.utils import check_adlr_autoresume_termination
 from megatron.data.data_loaders import build_pretraining_data_loader
 from megatron.utils import report_memory
-
+from megatron.pruners import LevelPruning
 
 def print_datetime(string):
     """Note that this call will sync across all ranks."""
@@ -117,6 +117,16 @@ def pretrain(train_valid_test_dataset_provider, model_provider,
     timers('train/valid/test data iterators').stop()
     print_datetime('after dataloaders are built')
 
+    # ============ Pruning Injection ====================
+
+    print_rank_0('creating pruner ...')
+    pruning = LevelPruning(model, sparsity=0.09, model_provider='megatron')
+    pruning.clone_params()
+    print_rank_0('pruner created')
+
+    # ===================================================
+
+
     # Print setup timing.
     print_rank_0('done with setups ...')
     timers.log(['model and optimizer', 'train/valid/test data iterators'])
@@ -126,7 +136,7 @@ def pretrain(train_valid_test_dataset_provider, model_provider,
     if args.do_train and args.train_iters > 0:
         iteration = train(forward_step_func,
                           model, optimizer, lr_scheduler,
-                          train_data_iterator, valid_data_iterator)
+                          train_data_iterator, valid_data_iterator, pruning)
     print_datetime('after training is done')
 
     if args.do_valid:
@@ -365,7 +375,7 @@ def backward_step(optimizer, model, input_tensor, output_tensor, output_tensor_g
     # Backward pass.
     if output_tensor_grad is None:
         output_tensor = optimizer.scale_loss(output_tensor)
-    torch.autograd.backward(output_tensor, grad_tensors=output_tensor_grad)
+    torch.autograd.backward(output_tensor, grad_tensors=output_tensor_grad, retain_graph=True)
 
     # Collect the grad of the input_tensor.
     input_tensor_grad = None
@@ -779,7 +789,7 @@ def save_checkpoint_and_time(iteration, model, optimizer, lr_scheduler):
 
 
 def train(forward_step_func, model, optimizer, lr_scheduler,
-          train_data_iterator, valid_data_iterator):
+          train_data_iterator, valid_data_iterator, pruning):
     """Train the model function."""
     args = get_args()
     timers = get_timers()
@@ -796,10 +806,24 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
     # Iterations.
     iteration = args.iteration
 
+    # ========== Pruning Calculations ===========
+ 
+    iters_left = args.train_iters - iteration
+    # we want 72% sparsity
+    prune_after_iter = iters_left / (0.72 / pruning.sparsity)
+    #prune_after_iter = 3
+    iter_to_prune = [i for i in range(iteration, iters_left, int(prune_after_iter))]
+
+    # ===========================================
+
     timers('interval time').start()
     print_datetime('before the start of training step')
     report_memory_flag = True
     while iteration < args.train_iters:
+        if iteration in iter_to_prune:
+            pruning.step(['attention','mlp'])
+            print(pruning.calculate_sparsity())   
+
         update_num_microbatches(args.consumed_train_samples)
         loss_dict, skipped_iter = train_step(forward_step_func,
                                              train_data_iterator,

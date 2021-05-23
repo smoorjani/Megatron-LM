@@ -2,8 +2,8 @@
 
 RANK=0
 WORLD_SIZE=1
-DATA_PATH=<Specify path and file prefix>_text_sentence
-CHECKPOINT_PATH=<Specify path>
+DATA_PATH=/home/user/megatron
+CHECKPOINT_PATH=/home/user/megatron/checkpoints/temp
 
 python pretrain_bert.py \
        --num-layers 24 \
@@ -18,7 +18,7 @@ python pretrain_bert.py \
        --save $CHECKPOINT_PATH \
        --load $CHECKPOINT_PATH \
        --data-path $DATA_PATH \
-       --vocab-file bert-vocab.txt \
+       --vocab-file /home/user/megatron/bert-large-uncased-vocab.txt \
        --data-impl mmap \
        --split 949,50,1 \
        --lr 0.0001 \

@@ -53,6 +53,7 @@ def model_provider():
             add_binary_head=True,
             parallel_output=True)
 
+    print(model)
     return model
 
 
